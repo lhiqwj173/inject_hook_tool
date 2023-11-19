@@ -1,0 +1,27 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "调试",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}\\Release\\hook.exe",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${fileDirname}",
+            "environment": [],
+            "console": "integratedTerminal",
+        },
+        {
+            "name": "调试dump",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}\\Release_run\\hook.dll",
+            "stopAtEntry": false,
+            "cwd": "${fileDirname}",
+            "environment": [],
+            "console": "integratedTerminal",
+            "dumpPath": ""
+        }
+    ]
+}
