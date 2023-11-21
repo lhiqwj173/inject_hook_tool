@@ -31,8 +31,11 @@ BOOL WINAPI DllMain(_In_ void *_DllHandle, _In_ unsigned long _Reason, _In_opt_ 
 	{
 		MessageBox(NULL, "注入成功", "提示", MB_OK);
 
-		// hook
-		hooker *h = hooker::get_instance();
+		// 软件断点 hook
+		// hooker_base *h = hooker_soft_break::get_instance();
+
+		// 硬件断点 hook
+		hooker_base *h = hooker_hard_break::get_instance();
 
 		///////////////////////////////////////
 		// 00405BEE               |.  8BCF          mov ecx,edi  << 目标位置 8B替换成CC, 读取esp中的字符串，手动执行__asm mov ecx,edi, 处理完毕后 eip+=2

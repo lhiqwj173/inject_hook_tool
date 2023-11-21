@@ -2,8 +2,6 @@
 #include <thread>
 #pragma comment(lib, "User32.lib")
 
-#include "../../hook.hpp"
-
 DWORD HideModule(HMODULE hModule)
 {
 	PIMAGE_DOS_HEADER pDos = (PIMAGE_DOS_HEADER)hModule;						  // DOS 头
@@ -70,41 +68,6 @@ void thread_func(LPVOID notUse)
 	}
 }
 
-void pop_esp_data(PCONTEXT p)
-{
-	// p->Esp: 0x0019F65C
-	// [p->Esp]: 0x0041A860
-	// [[p->Esp]]: http://yonken.blogcn.com
-
-	// 弹窗
-	MessageBox(NULL, (char *)(*(char **)(p->Esp)), "esp data:", MB_OK);
-
-	// 更改数据
-	const char *szStr = "hook";
-	*(DWORD *)(p->Esp) = (DWORD)szStr;
-
-	// 弹窗
-	MessageBox(NULL, (char *)(*(char **)(p->Esp)), "new data:", MB_OK);
-
-	// 原代码
-	__asm mov ecx, edi;
-
-	p->Eip += 2;
-}
-
-void dll_hook_func(LPVOID notUse)
-{
-	// hook
-	hooker *h = hooker::get_instance();
-
-	///////////////////////////////////////
-	// 00405BEE               |.  8BCF          mov ecx,edi  << 目标位置 8B替换成CC, 读取esp中的字符串，手动执行__asm mov ecx,edi, 处理完毕后 eip+=2
-	// 00405BF0               |.  C64424 18 01  mov byte ptr ss:[esp+0x18],0x1
-	///////////////////////////////////////
-	size_t addr = (size_t)GetModuleHandle(NULL) + 0x5BEE;
-	h->set_hook(addr, pop_esp_data);
-}
-
 BOOL APIENTRY DllMain(HMODULE hModule,
 					  DWORD ul_reason_for_call,
 					  LPVOID lpReserved)
@@ -120,10 +83,6 @@ BOOL APIENTRY DllMain(HMODULE hModule,
 			MessageBox(NULL, "隐藏dll", "提示", MB_OK);
 			LPTHREAD_START_ROUTINE new_dll_func1 = (LPTHREAD_START_ROUTINE)(newModule + ((DWORD)dll_func1 - (DWORD)hModule));
 			new_dll_func1(NULL);
-
-			// hook
-			LPTHREAD_START_ROUTINE new_dll_hook_func = (LPTHREAD_START_ROUTINE)(newModule + ((DWORD)dll_hook_func - (DWORD)hModule));
-			new_dll_hook_func(NULL);
 
 			// 创建线程
 			LPTHREAD_START_ROUTINE new_thread_func = (LPTHREAD_START_ROUTINE)(newModule + ((DWORD)thread_func - (DWORD)hModule));

@@ -56,5 +56,5 @@ int main()
     HANDLE hP = GetThePidOfTargetProcess(pid);
     // 开始注入
     // 这里填写Dll路径
-    DoInjection((char *)"D:\\code\\hook\\inject\\Release\\inject_test.dll", hP);
+    DoInjection((char *)"D:\\code\\inject_hook_tool\\inject_test\\Release\\inject_test.dll", hP);
 }
