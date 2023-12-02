@@ -54,16 +54,20 @@ DWORD HideModule(HMODULE hModule)
 	return (DWORD)mem;
 }
 
-void dll_func1(LPVOID notUse)
-{
-	MessageBox(NULL, "dll_func1", "提示", MB_OK);
-}
-
-void thread_func(LPVOID notUse)
+void thread_func4()
 {
 	while (1)
 	{
-		dll_func1(NULL);
+		printf("thread_func4\n");
+		Sleep(5000);
+	}
+}
+
+void thread_func1(LPVOID notUse)
+{
+	while (1)
+	{
+		MessageBox(NULL, "thread_func1", "提示", MB_OK);
 		Sleep(5000);
 	}
 }
@@ -77,19 +81,24 @@ BOOL APIENTRY DllMain(HMODULE hModule,
 	case DLL_PROCESS_ATTACH:
 	{
 		MessageBox(NULL, "注入成功", "提示", MB_OK);
+
+		// 创建线程
+		HANDLE hThread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)thread_func4, NULL, 0, NULL);
+		if (hThread != NULL)
+		{
+			CloseHandle(hThread);
+		}
+
 		DWORD newModule = HideModule(hModule);
 		if (newModule)
 		{
 			MessageBox(NULL, "隐藏dll", "提示", MB_OK);
-			LPTHREAD_START_ROUTINE new_dll_func1 = (LPTHREAD_START_ROUTINE)(newModule + ((DWORD)dll_func1 - (DWORD)hModule));
-			new_dll_func1(NULL);
 
 			// 创建线程
-			LPTHREAD_START_ROUTINE new_thread_func = (LPTHREAD_START_ROUTINE)(newModule + ((DWORD)thread_func - (DWORD)hModule));
+			LPTHREAD_START_ROUTINE new_thread_func = (LPTHREAD_START_ROUTINE)(newModule + ((DWORD)thread_func1 - (DWORD)hModule));
 			HANDLE hThread = CreateThread(NULL, 0, new_thread_func, NULL, 0, NULL);
 			if (hThread != NULL)
 			{
-				// 分离线程
 				CloseHandle(hThread);
 			}
 		}
@@ -105,5 +114,6 @@ BOOL APIENTRY DllMain(HMODULE hModule,
 		break;
 	}
 
+	// return TRUE;
 	return FALSE; // 返回false相当于卸载模块
 }

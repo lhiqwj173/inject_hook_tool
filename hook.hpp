@@ -42,7 +42,7 @@ public:
         if (_hooks.find(addr) == _hooks.end())
         {
             std::string msg = std::to_string(addr) + "没有找到hook点";
-            MessageBox(NULL, msg.data(), "提示", MB_OK);
+            // MessageBox(NULL, msg.data(), "提示", MB_OK);
             return;
         }
         (_hooks[addr])(p);
@@ -97,7 +97,7 @@ public:
 
             // 判断是否是hook的地址
             size_t addr = (size_t)ExceptionInfo->ExceptionRecord->ExceptionAddress;
-            MessageBox(NULL, (std::string("断点地址: ") + std::to_string(addr)).data(), "提示", MB_OK);
+            // MessageBox(NULL, (std::string("断点地址: ") + std::to_string(addr)).data(), "提示", MB_OK);
 
             if (_hook_data->check(addr))
             {
@@ -129,18 +129,19 @@ public:
 
     virtual ~hooker_base()
     {
-        MessageBox(NULL, "hooker_base::~hooker_base", "提示", MB_OK);
+        // MessageBox(NULL, "hooker_base::~hooker_base", "提示", MB_OK);
 
         // 删除断点
         size_t addr;
         while ((addr = _hook_data->next()) != 0)
         {
-            MessageBox(NULL, std::to_string((int)addr).data(), "删除断点", MB_OK);
+            // MessageBox(NULL, std::to_string((int)addr).data(), "删除断点", MB_OK);
             delete_hook(addr);
         }
 
+        // MessageBox(NULL, "取消异常处理回调", "提示", MB_OK);
         // 取消异常处理回调
-        RemoveVectoredExceptionHandler(ExceptionHandler_ptr);
+        // RemoveVectoredExceptionHandler(ExceptionHandler_ptr);
     }
 };
 
@@ -197,25 +198,25 @@ protected:
 
     static void _set_dr(int n, int v, CONTEXT &ctx)
     {
-        MessageBox(NULL, (std::string("设置: ") + std::to_string(n) + std::to_string(v)).data(), "DRS", MB_OK);
+        // MessageBox(NULL, (std::string("设置: ") + std::to_string(n) + std::to_string(v)).data(), "DRS", MB_OK);
 
         switch (n)
         {
         case 0:
             ctx.Dr0 = v;
-            MessageBox(NULL, (std::to_string(ctx.Dr0)).data(), "DRS", MB_OK);
+            // MessageBox(NULL, (std::to_string(ctx.Dr0)).data(), "DRS", MB_OK);
             break;
         case 1:
             ctx.Dr1 = v;
-            MessageBox(NULL, (std::to_string(ctx.Dr1)).data(), "DRS", MB_OK);
+            // MessageBox(NULL, (std::to_string(ctx.Dr1)).data(), "DRS", MB_OK);
             break;
         case 2:
             ctx.Dr2 = v;
-            MessageBox(NULL, (std::to_string(ctx.Dr2)).data(), "DRS", MB_OK);
+            // MessageBox(NULL, (std::to_string(ctx.Dr2)).data(), "DRS", MB_OK);
             break;
         case 3:
             ctx.Dr3 = v;
-            MessageBox(NULL, (std::to_string(ctx.Dr3)).data(), "DRS", MB_OK);
+            // MessageBox(NULL, (std::to_string(ctx.Dr3)).data(), "DRS", MB_OK);
             break;
         default:
             break;
@@ -276,7 +277,7 @@ protected:
                     // 如果线程父进程ID为当前进程ID
                     if (thread_entry32.th32OwnerProcessID == GetCurrentProcessId())
                     {
-                        MessageBox(NULL, (std::string("线程ID: ") + std::to_string(thread_entry32.th32ThreadID) + " 进程ID: " + std::to_string(thread_entry32.th32OwnerProcessID)).data(), "提示", MB_OK);
+                        //MessageBox(NULL, (std::string("线程ID: ") + std::to_string(thread_entry32.th32ThreadID) + " 进程ID: " + std::to_string(thread_entry32.th32OwnerProcessID)).data(), "提示", MB_OK);
 
                         // 打开主线程
                         HANDLE hadl = OpenThread(THREAD_SET_CONTEXT | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, thread_entry32.th32ThreadID);
@@ -314,7 +315,7 @@ protected:
 
                 if (i == 3)
                 {
-                    MessageBox(NULL, "没有找到硬件断点", "DRS", MB_OK);
+                    //MessageBox(NULL, "没有找到硬件断点", "DRS", MB_OK);
                 }
             }
         }
@@ -323,7 +324,7 @@ protected:
             // 设置硬件断点
             for (int i = 0; i < 4; i++)
             {
-                MessageBox(NULL, (std::to_string(*(p->dr_status + i))).data(), "DRS", MB_OK);
+                //MessageBox(NULL, (std::to_string(*(p->dr_status + i))).data(), "DRS", MB_OK);
                 if (*(p->dr_status + i) == 0)
                 {
                     // dr i
@@ -334,7 +335,7 @@ protected:
 
                 if (i == 3)
                 {
-                    MessageBox(NULL, "没有找到空闲的硬件断点", "DRS", MB_OK);
+                    //MessageBox(NULL, "没有找到空闲的硬件断点", "DRS", MB_OK);
                 }
             }
         }
@@ -358,7 +359,7 @@ protected:
     void __set_break_point(size_t addr, int clear)
     {
         std::string msg = std::to_string(addr) + ", " + std::to_string(clear) + ", " + std::to_string((int)dr_status);
-        MessageBox(NULL, msg.data(), "提示", MB_OK);
+        //MessageBox(NULL, msg.data(), "提示", MB_OK);
 
         // 参数
         param *p = new param{addr, GetCurrentThreadId(), clear, dr_status};
@@ -367,19 +368,19 @@ protected:
         HANDLE hThread = CreateThread(NULL, NULL, threadPro, (LPVOID)p, NULL, NULL);
 
         // 关闭线程句柄
-        MessageBox(NULL, "关闭线程句柄", "提示", MB_OK);
+        //MessageBox(NULL, "关闭线程句柄", "提示", MB_OK);
         CloseHandle(hThread);
     }
 
     virtual void _set_break_point(size_t addr) override
     {
-        MessageBox(NULL, "_set_break_point", "提示", MB_OK);
+        //MessageBox(NULL, "_set_break_point", "提示", MB_OK);
         __set_break_point(addr, 0);
     }
 
     virtual void _delete_break_point(size_t addr) override
     {
-        MessageBox(NULL, "_delete_break_point", "提示", MB_OK);
+        //MessageBox(NULL, "_delete_break_point", "提示", MB_OK);
         __set_break_point(addr, 1);
     }
 
@@ -394,6 +395,6 @@ public:
 
     virtual ~hooker_hard_break() override
     {
-        MessageBox(NULL, "hooker_hard_break::~hooker_hard_break", "提示", MB_OK);
+        //MessageBox(NULL, "hooker_hard_break::~hooker_hard_break", "提示", MB_OK);
     }
 };

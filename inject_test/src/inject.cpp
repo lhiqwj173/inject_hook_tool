@@ -48,9 +48,14 @@ BOOL DoInjection(char *DllPath, HANDLE hProcess)
 int main()
 {
     // 输入PID
-    DWORD pid;
-    std::cout << "请输入PID: ";
-    std::cin >> pid;
+    // DWORD pid;
+    // std::cout << "请输入PID: ";
+    // std::cin >> pid;
+
+    // 更具 title 获取 pid
+    DWORD pid = 0;
+    HWND hwnd = FindWindow(NULL, TEXT("代码注入器QQ:150330575—外挂教程上www.yjxsoft.com"));
+    GetWindowThreadProcessId(hwnd, &pid);
 
     Up();
     HANDLE hP = GetThePidOfTargetProcess(pid);
