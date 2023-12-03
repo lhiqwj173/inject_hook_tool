@@ -5,11 +5,19 @@
 #include <string>
 #include <map>
 
+using hook_func = std::function<void(PCONTEXT)>;
+
+struct hook_addr_func
+{
+    DWORD addr;
+    std::function<void(PCONTEXT)> func;
+};
+
 class hook_data
 {
 protected:
     // hook点的函数指针
-    std::map<size_t, std::function<void(PCONTEXT)>> _hooks;
+    std::map<DWORD, std::function<void(PCONTEXT)>> _hooks;
 
 private:
     hook_data() {}
@@ -22,37 +30,54 @@ public:
         return &instance;
     }
 
-    void set(size_t addr, const std::function<void(PCONTEXT)> &func)
+    void set(DWORD *addr, hook_func *func, size_t n)
     {
-        _hooks[addr] = func;
+        for (size_t i = 0; i < n; i++)
+        {
+            // MessageBox(NULL, (std::string("设置hook点: ") + std::to_string(addr[i])).data(), "提示", MB_OK);
+            _hooks[addr[i]] = func[i];
+        }
     }
 
-    void del(size_t addr)
+    void del(DWORD *addr, size_t n)
     {
-        _hooks.erase(addr);
+        for (size_t i = 0; i < n; i++)
+        {
+            _hooks.erase(addr[i]);
+        }
     }
 
-    bool check(size_t addr)
+    bool check(DWORD addr)
     {
         return _hooks.find(addr) != _hooks.end();
     }
 
-    void run(size_t addr, PCONTEXT p)
+    void run(DWORD addr, PCONTEXT p)
     {
         if (_hooks.find(addr) == _hooks.end())
         {
             std::string msg = std::to_string(addr) + "没有找到hook点";
-            // MessageBox(NULL, msg.data(), "提示", MB_OK);
+            MessageBox(NULL, msg.data(), "提示", MB_OK);
             return;
         }
         (_hooks[addr])(p);
     }
 
-    size_t next()
+    DWORD *hook_addrs(size_t &n)
     {
-        if (_hooks.size() > 0)
+        n = _hooks.size();
+        if (n > 0)
         {
-            return _hooks.begin()->first;
+            DWORD *addrs = new DWORD[n];
+
+            int i = 0;
+            for (auto it = _hooks.begin(); it != _hooks.end(); it++)
+            {
+                addrs[i] = it->first;
+                i++;
+            }
+
+            return addrs;
         }
 
         return 0;
@@ -64,9 +89,9 @@ class hooker_base
 protected:
     hook_data *_hook_data = hook_data::get_instance();
 
-    virtual void _set_break_point(size_t addr){};
+    virtual void _set_break_point(DWORD *addr, size_t n){};
 
-    virtual void _delete_break_point(size_t addr){};
+    virtual void _delete_break_point(DWORD *addr, size_t n){};
 
     hooker_base()
     {
@@ -80,27 +105,21 @@ private:
     hooker_base &operator=(const hooker_base &) = delete; // 禁止赋值运算符
 
 public:
-    static hooker_base *get_instance()
-    {
-        static hooker_base instance;
-        return &instance;
-    }
-
     // 处理异常的函数
     static LONG handler(_EXCEPTION_POINTERS *ExceptionInfo)
     {
         // 判断是否是断点异常
         auto code = ExceptionInfo->ExceptionRecord->ExceptionCode;
-        if (code == EXCEPTION_BREAKPOINT || code == EXCEPTION_SINGLE_STEP || code == 0xC0000005)
+        if (code == EXCEPTION_BREAKPOINT || code == EXCEPTION_SINGLE_STEP)
         {
-            hook_data *_hook_data = hook_data::get_instance();
-
             // 判断是否是hook的地址
-            size_t addr = (size_t)ExceptionInfo->ExceptionRecord->ExceptionAddress;
-            // MessageBox(NULL, (std::string("断点地址: ") + std::to_string(addr)).data(), "提示", MB_OK);
+            DWORD addr = (DWORD)ExceptionInfo->ExceptionRecord->ExceptionAddress;
 
+            hook_data *_hook_data = hook_data::get_instance();
             if (_hook_data->check(addr))
             {
+                // MessageBox(NULL, (std::string("断点地址: ") + std::to_string(addr)).data(), "提示", MB_OK);
+
                 // 调用hook函数
                 _hook_data->run(addr, ExceptionInfo->ContextRecord);
 
@@ -113,31 +132,33 @@ public:
         return EXCEPTION_CONTINUE_SEARCH;
     }
 
-    void set_hook(size_t addr, const std::function<void(PCONTEXT)> &func)
+    void set_hook(DWORD *addr, hook_func *func, size_t n = 1)
     {
-        _hook_data->set(addr, func);
+        _hook_data->set(addr, func, n);
 
         // 设置异常
-        _set_break_point(addr);
+        _set_break_point(addr, n);
     }
 
-    void delete_hook(size_t addr)
+    void delete_hook(DWORD *addr, size_t n = 1)
     {
-        _delete_break_point(addr);
-        _hook_data->del(addr);
+        _delete_break_point(addr, n);
+        _hook_data->del(addr, n);
     }
 
     virtual ~hooker_base()
     {
         // MessageBox(NULL, "hooker_base::~hooker_base", "提示", MB_OK);
 
+        // 获取所有的hook点
+        size_t n = 0;
+        DWORD *addrs = _hook_data->hook_addrs(n);
+
         // 删除断点
-        size_t addr;
-        while ((addr = _hook_data->next()) != 0)
-        {
-            // MessageBox(NULL, std::to_string((int)addr).data(), "删除断点", MB_OK);
-            delete_hook(addr);
-        }
+        delete_hook(addrs, n);
+
+        // 释放内存
+        delete[] addrs;
 
         // MessageBox(NULL, "取消异常处理回调", "提示", MB_OK);
         // 取消异常处理回调
@@ -149,28 +170,36 @@ class hooker_soft_break : public hooker_base
 {
 protected:
     // hook点的原代码
-    std::map<size_t, UCHAR> _old_codes;
+    std::map<DWORD, UCHAR> _old_codes;
 
-    virtual void _set_break_point(size_t addr)
+    virtual void _set_break_point(DWORD *addr, size_t n)
     {
         // 用 0xCC 替换原代码
         DWORD dwProtect = 0;
-        VirtualProtect((LPVOID)addr, 1, PAGE_EXECUTE_READWRITE, &dwProtect);
-        _old_codes[addr] = *(UCHAR *)addr;
-        *(UCHAR *)addr = 0xCC;
-        VirtualProtect((LPVOID)addr, 1, dwProtect, &dwProtect);
+
+        for (size_t i = 0; i < n; i++)
+        {
+            VirtualProtect((LPVOID)addr[i], 1, PAGE_EXECUTE_READWRITE, &dwProtect);
+            _old_codes[addr[i]] = *(UCHAR *)addr[i];
+            *(UCHAR *)addr[i] = 0xCC;
+            VirtualProtect((LPVOID)addr[i], 1, dwProtect, &dwProtect);
+        }
     }
 
-    virtual void _delete_break_point(size_t addr)
+    virtual void _delete_break_point(DWORD *addr, size_t n)
     {
         // 恢复原代码
         DWORD dwProtect = 0;
-        VirtualProtect((LPVOID)addr, 1, PAGE_EXECUTE_READWRITE, &dwProtect);
-        *(UCHAR *)addr = _old_codes[addr];
-        VirtualProtect((LPVOID)addr, 1, dwProtect, &dwProtect);
 
-        // 删除记录
-        _old_codes.erase(addr);
+        for (size_t i = 0; i < n; i++)
+        {
+            VirtualProtect((LPVOID)addr[i], 1, PAGE_EXECUTE_READWRITE, &dwProtect);
+            *(UCHAR *)addr[i] = _old_codes[addr[i]];
+            VirtualProtect((LPVOID)addr[i], 1, dwProtect, &dwProtect);
+
+            // 删除记录
+            _old_codes.erase(addr[i]);
+        }
     }
 
     hooker_soft_break() : hooker_base() {}
@@ -188,7 +217,8 @@ class hooker_hard_break : public hooker_base
 protected:
     struct param
     {
-        size_t addr;
+        DWORD *addr;
+        size_t n;
         DWORD threadId;
         int clear;
         int *dr_status;
@@ -196,7 +226,7 @@ protected:
 
     int dr_status[4] = {0};
 
-    static void _set_dr(int n, int v, CONTEXT &ctx)
+    static void __set_dr(int n, int v, CONTEXT &ctx)
     {
         // MessageBox(NULL, (std::string("设置: ") + std::to_string(n) + std::to_string(v)).data(), "DRS", MB_OK);
 
@@ -223,17 +253,25 @@ protected:
         }
     }
 
+    static void _set_dr(int *ns, DWORD *v, size_t n, CONTEXT &ctx)
+    {
+        for (size_t i = 0; i < n; i++)
+        {
+            __set_dr(ns[i], v[i], ctx);
+        }
+    }
+
     // 设置硬件断点
-    static void SetHwBreakPoint(HANDLE hThread, size_t addr, int *_dr_status, int clear, int drn)
+    static void SetHwBreakPoint(HANDLE hThread, DWORD *addr, int clear, int *drn, size_t n)
     {
         CONTEXT ctx;
         ctx.ContextFlags = CONTEXT_ALL;
         GetThreadContext(hThread, &ctx);
 
-        // ctx.Dr1 = (size_t)GetModuleHandle(NULL) + 0x5BEE;
+        // ctx.Dr1 = (DWORD)GetModuleHandle(NULL) + 0x5BEE;
         // ctx.Dr7 |= 0x1 << 2; // 全局开关
 
-        // ctx.Dr0 = (size_t)GetModuleHandle(NULL) + 0x5BEE;
+        // ctx.Dr0 = (DWORD)GetModuleHandle(NULL) + 0x5BEE;
         // ctx.Dr7 |= 0x1 << 1; // 全局开关
         // ctx.Dr7 |= 0x1; // 局部开关
 
@@ -243,11 +281,11 @@ protected:
 
         if (clear)
         {
-            _set_dr(drn, 0, ctx);
+            _set_dr(drn, 0, n, ctx);
         }
         else
         {
-            _set_dr(drn, addr, ctx);
+            _set_dr(drn, addr, n, ctx);
         }
 
         // 全开
@@ -256,7 +294,7 @@ protected:
         SetThreadContext(hThread, &ctx);
     }
 
-    static void loop(param *p, int drn)
+    static void loop(param *p, int *drn)
     {
         // 遍历线程 通过openthread获取到线程环境后设置硬件断点
         HANDLE hTool32 = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
@@ -277,12 +315,12 @@ protected:
                     // 如果线程父进程ID为当前进程ID
                     if (thread_entry32.th32OwnerProcessID == GetCurrentProcessId())
                     {
-                        //MessageBox(NULL, (std::string("线程ID: ") + std::to_string(thread_entry32.th32ThreadID) + " 进程ID: " + std::to_string(thread_entry32.th32OwnerProcessID)).data(), "提示", MB_OK);
+                        // MessageBox(NULL, (std::string("线程ID: ") + std::to_string(thread_entry32.th32ThreadID) + " 进程ID: " + std::to_string(thread_entry32.th32OwnerProcessID)).data(), "提示", MB_OK);
 
                         // 打开主线程
                         HANDLE hadl = OpenThread(THREAD_SET_CONTEXT | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, thread_entry32.th32ThreadID);
                         SuspendThread((HANDLE)hadl);
-                        SetHwBreakPoint(hadl, p->addr, p->dr_status, p->clear, drn);
+                        SetHwBreakPoint(hadl, p->addr, p->clear, drn, p->n);
                         ResumeThread((HANDLE)hadl);
                         CloseHandle(hadl);
                     }
@@ -293,21 +331,18 @@ protected:
         }
     }
 
-    static DWORD WINAPI threadPro(_In_ LPVOID lpParam)
+    static int check_dr_idx(int *dr_status, int clear, DWORD addr)
     {
-        // 获取参数
-        param *p = (param *)lpParam;
-
         // 确定 drn
         int drn = -1;
-        if (p->clear)
+        if (clear)
         {
             // 取消硬件断点
             for (int i = 0; i < 4; i++)
             {
-                if (*(p->dr_status + i) == p->addr)
+                if (*(dr_status + i) == addr)
                 {
-                    *(p->dr_status + i) = 0;
+                    *(dr_status + i) = 0;
 
                     drn = i;
                     break;
@@ -315,7 +350,7 @@ protected:
 
                 if (i == 3)
                 {
-                    //MessageBox(NULL, "没有找到硬件断点", "DRS", MB_OK);
+                    // MessageBox(NULL, "没有找到硬件断点", "DRS", MB_OK);
                 }
             }
         }
@@ -324,64 +359,75 @@ protected:
             // 设置硬件断点
             for (int i = 0; i < 4; i++)
             {
-                //MessageBox(NULL, (std::to_string(*(p->dr_status + i))).data(), "DRS", MB_OK);
-                if (*(p->dr_status + i) == 0)
+                if (*(dr_status + i) == 0)
                 {
                     // dr i
                     drn = i;
-                    *(p->dr_status + i) = p->addr;
+                    *(dr_status + i) = addr;
                     break;
                 }
 
                 if (i == 3)
                 {
-                    //MessageBox(NULL, "没有找到空闲的硬件断点", "DRS", MB_OK);
+                    // MessageBox(NULL, "没有找到空闲的硬件断点", "DRS", MB_OK);
                 }
             }
+        }
+
+        return drn;
+    }
+
+    static DWORD WINAPI threadPro(_In_ LPVOID lpParam)
+    {
+        // 获取参数
+        param *p = (param *)lpParam;
+
+        // 确定 drn
+        int n = min(4, p->n);
+        int *drn = new int[n];
+        for (int i = 0; i < n; i++)
+        {
+            drn[i] = check_dr_idx(p->dr_status, p->clear, p->addr[i]);
+            MessageBox(NULL, (std::to_string(i) + ": " + std::to_string(drn[i])).data(), "提示", MB_OK);
         }
 
         // 遍历线程设置断点
         loop(p, drn);
 
-        // 只设置一个线程 全局断点
-        // HANDLE hadl = OpenThread(THREAD_SET_CONTEXT | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, p->threadId);
-        // SuspendThread((HANDLE)hadl);
-        // SetHwBreakPoint(hadl, p->addr, p->dr_status, p->clear);
-        // ResumeThread((HANDLE)hadl);
-        // CloseHandle(hadl);
-
-        // 释放参数
+        // 释放内存
+        delete[] drn;
+        delete[] p->addr;
         delete p;
 
         return 0;
     }
 
-    void __set_break_point(size_t addr, int clear)
+    void __set_break_point(DWORD *addr, int clear, size_t n)
     {
-        std::string msg = std::to_string(addr) + ", " + std::to_string(clear) + ", " + std::to_string((int)dr_status);
-        //MessageBox(NULL, msg.data(), "提示", MB_OK);
+
+        // 固化参数 addr
+        DWORD *_addr = new DWORD[n];
+        memcpy(_addr, addr, n * sizeof(DWORD));
 
         // 参数
-        param *p = new param{addr, GetCurrentThreadId(), clear, dr_status};
+        param *p = new param{_addr, n, GetCurrentThreadId(), clear, dr_status};
 
         // 在子线程中设置硬件断点
         HANDLE hThread = CreateThread(NULL, NULL, threadPro, (LPVOID)p, NULL, NULL);
 
         // 关闭线程句柄
-        //MessageBox(NULL, "关闭线程句柄", "提示", MB_OK);
         CloseHandle(hThread);
     }
 
-    virtual void _set_break_point(size_t addr) override
+    virtual void _set_break_point(DWORD *addr, size_t n) override
     {
-        //MessageBox(NULL, "_set_break_point", "提示", MB_OK);
-        __set_break_point(addr, 0);
+        __set_break_point(addr, 0, n);
     }
 
-    virtual void _delete_break_point(size_t addr) override
+    virtual void _delete_break_point(DWORD *addr, size_t n) override
     {
-        //MessageBox(NULL, "_delete_break_point", "提示", MB_OK);
-        __set_break_point(addr, 1);
+        // MessageBox(NULL, "_delete_break_point", "提示", MB_OK);
+        __set_break_point(addr, 1, n);
     }
 
     hooker_hard_break() : hooker_base() {}
@@ -395,6 +441,6 @@ public:
 
     virtual ~hooker_hard_break() override
     {
-        //MessageBox(NULL, "hooker_hard_break::~hooker_hard_break", "提示", MB_OK);
+        // MessageBox(NULL, "hooker_hard_break::~hooker_hard_break", "提示", MB_OK);
     }
 };

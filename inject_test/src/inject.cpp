@@ -9,6 +9,7 @@ HANDLE GetThePidOfTargetProcess(DWORD pid)
     HANDLE hProcee = ::OpenProcess(PROCESS_ALL_ACCESS | PROCESS_CREATE_THREAD, 0, pid);
     return hProcee;
 }
+
 // 提升权限
 void Up()
 {

@@ -8,7 +8,9 @@ void pop_esp_data(PCONTEXT p)
 	// [[p->Esp]]: http://yonken.blogcn.com
 
 	// 弹窗
-	MessageBox(NULL, (char *)(*(char **)(p->Esp)), "esp data:", MB_OK);
+	MessageBox(NULL, std::to_string(*(int *)(p->Esp)).data(), "esp data:", MB_OK);
+	MessageBox(NULL, std::to_string(*(size_t *)(p->Esp)).data(), "esp data:", MB_OK);
+	// MessageBox(NULL, (char *)(*(char **)(p->Esp)), "esp data:", MB_OK);
 
 	// 更改数据
 	const char *szStr = "hook";
@@ -41,10 +43,10 @@ BOOL WINAPI DllMain(_In_ void *_DllHandle, _In_ unsigned long _Reason, _In_opt_ 
 		// 00405BEE               |.  8BCF          mov ecx,edi  << 目标位置 8B替换成CC, 读取esp中的字符串，手动执行__asm mov ecx,edi, 处理完毕后 eip+=2
 		// 00405BF0               |.  C64424 18 01  mov byte ptr ss:[esp+0x18],0x1
 		///////////////////////////////////////
-		size_t addr = (size_t)GetModuleHandle(NULL) + 0x5BEE;
-		MessageBox(NULL, (std::string("Address: ") + std::to_string(addr)).data(), "断点地址", MB_OK);
+		size_t addr[1] = {(size_t)GetModuleHandle(NULL) + 0x5BEE};
+		hook_func func[1] = {pop_esp_data};
 
-		h->set_hook(addr, pop_esp_data);
+		h->set_hook(addr, func);
 	}
 	break;
 	case DLL_PROCESS_DETACH:

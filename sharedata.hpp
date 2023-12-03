@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <iostream>
+#include <mutex>
 
 class sharedata
 {
@@ -14,6 +16,7 @@ public:
     {
         CHAR,
         INT,
+        SIZE_T,
         DOUBLE,
         CHAR_5,
         CHAR_10,
@@ -30,10 +33,15 @@ private:
     HANDLE pMutex = NULL;
     HANDLE pEvent = NULL;
 
+    // 缓存数据
+    void *cache_data = nullptr;
+    mutable std::mutex cache_mutex;
+
     // 数据类型对应的大小
     const std::map<type, int> type_size{
         {CHAR, sizeof(char)},
         {INT, sizeof(int)},
+        {SIZE_T, sizeof(size_t)},
         {DOUBLE, sizeof(double)},
         {CHAR_5, sizeof(char) * 5},
         {CHAR_10, sizeof(char) * 10},
@@ -106,13 +114,22 @@ public:
         }
         else
         {
-            pMutex = OpenMutex(NULL, FALSE, (filename + "_MTX").data());
+            pMutex = OpenMutex(MUTEX_ALL_ACCESS, FALSE, (filename + "_MTX").data());
             if (pMutex == NULL)
             {
                 MessageBox(NULL, (std::string("打开互斥量失败, 错误码 ") + std::to_string(GetLastError())).data(), "提示", MB_OK);
                 return false;
             }
         }
+
+        // 申请本地缓存空间
+        cache_data = malloc(size);
+        if (cache_data == NULL)
+        {
+            MessageBox(NULL, (std::string("申请本地缓存空间失败, 错误码 ") + std::to_string(GetLastError())).data(), "提示", MB_OK);
+            return false;
+        }
+        memset(cache_data, 0, size);
 
         // 映射到进程空间
         lpBase = MapViewOfFile(hMapFile, FILE_MAP_ALL_ACCESS, 0, 0, _size);
@@ -145,6 +162,11 @@ public:
         return true;
     }
 
+    std::mutex &get_mutex()
+    {
+        return cache_mutex;
+    }
+
     // 读取数据
     const LPVOID read(int index) const
     {
@@ -153,7 +175,7 @@ public:
             return NULL;
         }
 
-        return (LPVOID)((DWORD)lpBase + type_offset.at(index));
+        return (LPVOID)((DWORD)cache_data + type_offset.at(index));
     }
 
     // 发送提醒
@@ -167,14 +189,17 @@ public:
     void set(void *data_p, int index, type data_type)
     {
         // 数据地址
-        DWORD dst = (DWORD)lpBase + type_offset[index];
+        DWORD dst = (DWORD)cache_data + type_offset[index];
 
-        // 获取互斥量
-        WaitForSingleObject(pMutex, INFINITE);
+        std::lock_guard<std::mutex> lock(cache_mutex);
         switch (data_type)
         {
         case CHAR:
             memcpy((void *)dst, data_p, type_size.at(data_type));
+            break;
+
+        case SIZE_T:
+            *(size_t *)dst = *(size_t *)data_p;
             break;
 
         case INT:
@@ -197,6 +222,27 @@ public:
         default:
             break;
         }
+    }
+
+    // 将缓存数据应用到共享内存
+    void cache_apply()
+    {
+        WaitForSingleObject(pMutex, INFINITE);
+        memcpy(lpBase, cache_data, size);
+
+        ResetEvent(pEvent);
+        SetEvent(pEvent);
+
+        ReleaseMutex(pMutex);
+    }
+
+    // 将共享内存数据更新到缓存
+    void cache_update()
+    {
+        WaitForSingleObject(pEvent, INFINITE);
+        WaitForSingleObject(pMutex, INFINITE);
+        memcpy(cache_data, lpBase, size);
+        ResetEvent(pEvent);
 
         ReleaseMutex(pMutex);
     }
@@ -204,12 +250,13 @@ public:
     // 输出打印 hex
     void hex() const
     {
-        WaitForSingleObject(pMutex, INFINITE);
-        for (int i = 0; i < size; i++)
         {
-            std::cout << std::showbase << std::hex << (int)((char *)lpBase)[i] << " ";
+            std::lock_guard<std::mutex> lock(cache_mutex);
+            for (int i = 0; i < size; i++)
+            {
+                std::cout << std::showbase << std::hex << (int)((char *)lpBase)[i] << " ";
+            }
         }
-        ReleaseMutex(pMutex);
         std::cout << std::endl;
     }
 
@@ -226,6 +273,12 @@ public:
         {
             CloseHandle(hMapFile);
             hMapFile = NULL;
+        }
+
+        // 释放缓存空间
+        if (cache_data)
+        {
+            free(cache_data);
         }
     }
 };
