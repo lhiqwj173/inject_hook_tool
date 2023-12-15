@@ -1,6 +1,5 @@
 ﻿#pragma once
 #include <windows.h>
-#include <iostream>
 
 class module_helper
 {
@@ -14,9 +13,10 @@ public:
     {
         PIMAGE_DOS_HEADER pDos = (PIMAGE_DOS_HEADER)hModule;                          // DOS 头
         PIMAGE_NT_HEADERS pNt = (PIMAGE_NT_HEADERS)((DWORD)hModule + pDos->e_lfanew); // NT 头
+        DWORD size = pNt->OptionalHeader.SizeOfImage;
 
         // 1.申请空间
-        PBYTE mem = (PBYTE)VirtualAlloc(0, pNt->OptionalHeader.SizeOfImage, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+        PBYTE mem = (PBYTE)VirtualAlloc(0, size, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
         if (NULL == mem)
         {
             // 申请空间失败,做些啥.....
@@ -24,7 +24,7 @@ public:
         }
 
         // 2.拷贝到新的空间
-        memcpy(mem, (void *)hModule, pNt->OptionalHeader.SizeOfImage);
+        memcpy(mem, (void *)hModule, size);
 
         // 3.修复重定位   数据目录第6项是重定位表
         PIMAGE_BASE_RELOCATION rBase = (PIMAGE_BASE_RELOCATION)((DWORD)mem + pNt->OptionalHeader.DataDirectory[5].VirtualAddress);
@@ -103,5 +103,15 @@ public:
 
         CloseHandle(hToken);
         return true;
+    }
+
+    static DWORD get_func_diff(char *dll, char *func_name)
+    {
+        // 获取函数地址偏移
+        HMODULE h = LoadLibrary(dll);
+        FARPROC functionAddress = GetProcAddress((HMODULE)h, func_name);
+        DWORD func_diff = (DWORD)functionAddress - (DWORD)h;
+        FreeLibrary(h);
+        return func_diff;
     }
 };

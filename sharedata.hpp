@@ -15,6 +15,7 @@ public:
     enum type
     {
         CHAR,
+        _DWORD,
         INT,
         SIZE_T,
         DOUBLE,
@@ -40,6 +41,7 @@ private:
     // 数据类型对应的大小
     const std::map<type, int> type_size{
         {CHAR, sizeof(char)},
+        {_DWORD, sizeof(DWORD)},
         {INT, sizeof(int)},
         {SIZE_T, sizeof(size_t)},
         {DOUBLE, sizeof(double)},
@@ -168,14 +170,20 @@ public:
     }
 
     // 读取数据
-    const LPVOID read(int index) const
+    const void *const read(int index) const
+    {
+        return get(index);
+    }
+
+    // 获取数据
+    const void *get(int index) const
     {
         if (lpBase == NULL)
         {
             return NULL;
         }
 
-        return (LPVOID)((DWORD)cache_data + type_offset.at(index));
+        return (void *)((DWORD)cache_data + type_offset.at(index));
     }
 
     // 发送提醒
@@ -186,7 +194,7 @@ public:
     }
 
     // 设置数据
-    void set(void *data_p, int index, type data_type)
+    void set(const void *const data_p, int index, type data_type)
     {
         // 数据地址
         DWORD dst = (DWORD)cache_data + type_offset[index];
@@ -196,6 +204,10 @@ public:
         {
         case CHAR:
             memcpy((void *)dst, data_p, type_size.at(data_type));
+            break;
+
+        case _DWORD:
+            *(DWORD *)dst = *(DWORD *)data_p;
             break;
 
         case SIZE_T:

@@ -49,7 +49,8 @@ int main()
         HANDLE hP = GetThePidOfTargetProcess(pid);
         // 开始注入
         // 这里填写Dll路径
-        DoInjection((char *)"D:\\code\\inject_hook_tool\\sharemem_test\\Release\\sharemem_test.dll", hP);
+        // DoInjection((char *)"D:\\code\\inject_hook_tool\\sharemem_test\\Release\\sharemem_test.dll", hP);
+        DoInjection((char *)"D:\\code\\inject_hook_tool\\free_fail_test\\dllmain.dll", hP);
 
         while (1)
         {

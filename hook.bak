@@ -1,0 +1,757 @@
+#pragma once
+#include <Windows.h>
+#include <shlobj.h>
+#include <tlhelp32.h>
+#include <DbgHelp.h>
+#include <functional>
+#include <string>
+#include <map>
+
+// 链接lib
+#pragma comment(lib, "Shell32.lib")
+#pragma comment(lib, "DbgHelp.lib")
+
+// 打印堆栈数据
+void PrintStackTrace(CONTEXT *context, std::string &data)
+{
+    STACKFRAME64 stackFrame = {0};
+    DWORD machineType;
+    DWORD64 basePointer;
+    DWORD64 stackPtr;
+
+    // 初始化 STACKFRAME64 结构体
+#ifdef _M_IX86
+    machineType = IMAGE_FILE_MACHINE_I386;
+    stackFrame.AddrPC.Offset = context->Eip;
+    stackFrame.AddrFrame.Offset = context->Ebp;
+    stackFrame.AddrStack.Offset = context->Esp;
+    basePointer = context->Ebp;
+    stackPtr = context->Esp;
+#elif _M_X64
+    machineType = IMAGE_FILE_MACHINE_AMD64;
+    stackFrame.AddrPC.Offset = context->Rip;
+    stackFrame.AddrFrame.Offset = context->Rsp;
+    stackFrame.AddrStack.Offset = context->Rsp;
+    basePointer = context->Rsp;
+    stackPtr = context->Rsp;
+#else
+#error "Unsupported architecture"
+#endif
+
+    stackFrame.AddrPC.Mode = AddrModeFlat;
+    stackFrame.AddrFrame.Mode = AddrModeFlat;
+    stackFrame.AddrStack.Mode = AddrModeFlat;
+
+    HANDLE hProcess = GetCurrentProcess();
+    HANDLE hThread = GetCurrentThread();
+
+    // 遍历堆栈帧
+    while (StackWalk64(machineType, hProcess, hThread, &stackFrame, context, NULL, SymFunctionTableAccess64, SymGetModuleBase64, NULL))
+    {
+        // 堆栈帧信息
+        data += "Frame Addr: 0x" + std::to_string(stackFrame.AddrPC.Offset) + "\t";
+
+        // 获取符号信息
+        DWORD64 displacement = 0;
+        BYTE symbolBuffer[sizeof(IMAGEHLP_SYMBOL64) + MAX_SYM_NAME];
+        PIMAGEHLP_SYMBOL64 symbol = reinterpret_cast<PIMAGEHLP_SYMBOL64>(symbolBuffer);
+        symbol->SizeOfStruct = sizeof(IMAGEHLP_SYMBOL64);
+        symbol->MaxNameLength = MAX_SYM_NAME;
+
+        if (SymGetSymFromAddr64(hProcess, stackFrame.AddrPC.Offset, &displacement, symbol))
+        {
+            data += "Func: " + std::string(symbol->Name) + "\t";
+
+            // 遍历函数参数
+            DWORD64 framePtr = basePointer;
+            while (framePtr < stackPtr)
+            {
+                data += "\n";
+                DWORD64 paramValue;
+                if (ReadProcessMemory(hProcess, (LPVOID)framePtr, &paramValue, sizeof(DWORD64), NULL))
+                {
+                    data += "\tPara: " + std::string(symbol->Name) + " Value: " + std::to_string(paramValue) + "\n";
+                }
+                framePtr += sizeof(DWORD64);
+                symbol++;
+            }
+        }
+        data += "\n";
+
+        // 读取函数源码行信息
+        DWORD displacementLine = 0;
+        IMAGEHLP_LINE64 line = {sizeof(IMAGEHLP_LINE64)};
+        if (SymGetLineFromAddr64(hProcess, stackFrame.AddrPC.Offset, &displacementLine, &line))
+        {
+            data += std::string("\tFile: ") + line.FileName + ", line " + std::to_string(line.LineNumber) + "\n\n";
+        }
+    }
+}
+
+std::string get_desktop_path()
+{
+    char desktopPath[MAX_PATH];
+    SHGetSpecialFolderPath(0, desktopPath, CSIDL_DESKTOPDIRECTORY, 0);
+    return desktopPath;
+}
+
+std::string parse_error_code(DWORD error)
+{
+    // 异常代码: ExceptionInfo->ExceptionRecord->ExceptionCode
+    /*
+    EXCEPTION_ACCESS_VIOLATION
+    线程尝试从虚拟地址读取或写入其没有相应访问权限的虚拟地址。
+    EXCEPTION_ARRAY_BOUNDS_EXCEEDED
+    线程尝试访问超出边界且基础硬件支持边界检查的数组元素。
+    EXCEPTION_BREAKPOINT
+    遇到断点。
+    EXCEPTION_DATATYPE_MISALIGNMENT
+    线程尝试读取或写入在不提供对齐的硬件上未对齐的数据。 例如，16 位值必须在 2 字节边界上对齐;4 字节边界上的 32 位值等。
+    EXCEPTION_FLT_DENORMAL_OPERAND
+    浮点运算中的一个操作数是反常运算。 非规范值太小，无法表示为标准浮点值。
+    EXCEPTION_FLT_DIVIDE_BY_ZERO
+    线程尝试将浮点值除以 0 的浮点除数。
+    EXCEPTION_FLT_INEXACT_RESULT
+    浮点运算的结果不能完全表示为小数点。
+    EXCEPTION_FLT_INVALID_OPERATION
+    此异常表示此列表中未包含的任何浮点异常。
+    EXCEPTION_FLT_OVERFLOW
+    浮点运算的指数大于相应类型允许的量级。
+    EXCEPTION_FLT_STACK_CHECK
+    堆栈因浮点运算而溢出或下溢。
+    EXCEPTION_FLT_UNDERFLOW
+    浮点运算的指数小于相应类型允许的量级。
+    EXCEPTION_ILLEGAL_INSTRUCTION
+    线程尝试执行无效指令。
+    EXCEPTION_IN_PAGE_ERROR
+    线程尝试访问不存在的页面，但系统无法加载该页。 例如，如果在通过网络运行程序时网络连接断开，则可能会发生此异常。
+    EXCEPTION_INT_DIVIDE_BY_ZERO
+    线程尝试将整数值除以零的整数除数。
+    EXCEPTION_INT_OVERFLOW
+    整数运算的结果导致执行结果中最重要的位。
+    EXCEPTION_INVALID_DISPOSITION
+    异常处理程序向异常调度程序返回了无效处置。 使用高级语言（如 C）的程序员不应遇到此异常。
+    EXCEPTION_NONCONTINUABLE_EXCEPTION
+    线程尝试在发生不可连续的异常后继续执行。
+    EXCEPTION_PRIV_INSTRUCTION
+    线程尝试执行在当前计算机模式下不允许其操作的指令。
+    EXCEPTION_SINGLE_STEP
+    跟踪陷阱或其他单指令机制指示已执行一个指令。
+    EXCEPTION_STACK_OVERFLOW
+    线程占用了其堆栈。
+    */
+    switch (error)
+    {
+    case EXCEPTION_ACCESS_VIOLATION:
+        return "EXCEPTION_ACCESS_VIOLATION | 线程尝试从虚拟地址读取或写入其没有相应访问权限的虚拟地址。";
+    case EXCEPTION_DATATYPE_MISALIGNMENT:
+        return "EXCEPTION_DATATYPE_MISALIGNMENT | 	线程尝试访问超出边界且基础硬件支持边界检查的数组元素。";
+    case EXCEPTION_BREAKPOINT:
+        return "EXCEPTION_BREAKPOINT | 遇到断点。";
+    case EXCEPTION_SINGLE_STEP:
+        return "EXCEPTION_SINGLE_STEP | 线程尝试读取或写入在不提供对齐的硬件上未对齐的数据。 例如，16 位值必须在 2 字节边界上对齐;4 字节边界上的 32 位值等。";
+    case EXCEPTION_ARRAY_BOUNDS_EXCEEDED:
+        return "EXCEPTION_ARRAY_BOUNDS_EXCEEDED | 浮点运算中的一个操作数是反常运算。 非规范值太小，无法表示为标准浮点值。";
+    case EXCEPTION_FLT_DENORMAL_OPERAND:
+        return "EXCEPTION_FLT_DENORMAL_OPERAND | 线程尝试将浮点值除以 0 的浮点除数。";
+    case EXCEPTION_FLT_DIVIDE_BY_ZERO:
+        return "EXCEPTION_FLT_DIVIDE_BY_ZERO | 浮点运算的结果不能完全表示为小数点。";
+    case EXCEPTION_FLT_INEXACT_RESULT:
+        return "EXCEPTION_FLT_INEXACT_RESULT | 此异常表示此列表中未包含的任何浮点异常。";
+    case EXCEPTION_FLT_INVALID_OPERATION:
+        return "EXCEPTION_FLT_INVALID_OPERATION | 浮点运算的指数大于相应类型允许的量级。";
+    case EXCEPTION_FLT_OVERFLOW:
+        return "EXCEPTION_FLT_OVERFLOW | 堆栈因浮点运算而溢出或下溢。";
+    case EXCEPTION_FLT_STACK_CHECK:
+        return "EXCEPTION_FLT_STACK_CHECK | 浮点运算的指数小于相应类型允许的量级。";
+    case EXCEPTION_FLT_UNDERFLOW:
+        return "EXCEPTION_FLT_UNDERFLOW | 线程尝试执行无效指令。";
+    case EXCEPTION_INT_DIVIDE_BY_ZERO:
+        return "EXCEPTION_INT_DIVIDE_BY_ZERO | 线程尝试将整数值除以零的整数除数。";
+    case EXCEPTION_INT_OVERFLOW:
+        return "EXCEPTION_INT_OVERFLOW | 整数运算的结果导致执行结果中最重要的位。";
+    case EXCEPTION_PRIV_INSTRUCTION:
+        return "EXCEPTION_PRIV_INSTRUCTION | 异常处理程序向异常调度程序返回了无效处置。 使用高级语言（如 C）的程序员不应遇到此异常。";
+    case EXCEPTION_IN_PAGE_ERROR:
+        return "EXCEPTION_IN_PAGE_ERROR | 线程尝试在发生不可连续的异常后继续执行。";
+    case EXCEPTION_ILLEGAL_INSTRUCTION:
+        return "EXCEPTION_ILLEGAL_INSTRUCTION | 线程尝试执行在当前计算机模式下不允许其操作的指令。";
+    case EXCEPTION_NONCONTINUABLE_EXCEPTION:
+        return "EXCEPTION_NONCONTINUABLE_EXCEPTION | 跟踪陷阱或其他单指令机制指示已执行一个指令。";
+    case EXCEPTION_STACK_OVERFLOW:
+        return "EXCEPTION_STACK_OVERFLOW | 线程占用了其堆栈。";
+    default:
+        return std::to_string(error) + "未知异常";
+    }
+}
+
+struct hook_addr_func
+{
+    DWORD addr;
+    DWORD func;
+};
+
+class hook_data
+{
+protected:
+    // hook点的函数指针
+    // <地址, 回调>
+    std::map<DWORD, DWORD> _hooks;
+
+    // 模块范围
+    DWORD hModule = NULL;
+    DWORD endModule = NULL;
+
+private:
+    hook_data(const hook_data &) = delete;            // 禁止拷贝构造函数
+    hook_data &operator=(const hook_data &) = delete; // 禁止赋值运算符
+public:
+    hook_data() {}
+    static hook_data *get_instance()
+    {
+        static hook_data instance;
+        return &instance;
+    }
+
+    // 设置模块句柄
+    void set_dll_hModule(DWORD _hModule)
+    {
+        hModule = _hModule;
+
+        PIMAGE_DOS_HEADER pDos = (PIMAGE_DOS_HEADER)hModule;                          // DOS 头
+        PIMAGE_NT_HEADERS pNt = (PIMAGE_NT_HEADERS)((DWORD)hModule + pDos->e_lfanew); // NT 头
+        DWORD size = pNt->OptionalHeader.SizeOfImage;
+
+        endModule = hModule + size;
+
+        MessageBox(NULL, (std::string("设置模块句柄: ") + std::to_string(hModule) + " " + std::to_string(endModule)).data(), "提示", MB_OK);
+    }
+
+    DWORD get_dll_hModule()
+    {
+        return hModule;
+    }
+
+    // 如果地址处于模块内，需要dump
+    // 未设置模块句柄时，返回false
+    bool need_dump(DWORD addr)
+    {
+        if (!hModule)
+        {
+            return false;
+        }
+        else
+        {
+            return addr >= hModule && addr <= endModule;
+        }
+    }
+
+    void set(DWORD *addr, DWORD *func, size_t n)
+    {
+        for (size_t i = 0; i < n; i++)
+        {
+            MessageBox(NULL, (std::string("设置hook点: ") + std::to_string(addr[i]) + " " + std::to_string(func[i])).data(), "提示", MB_OK);
+            _hooks[addr[i]] = func[i];
+        }
+    }
+
+    void del(DWORD *addr, size_t n)
+    {
+        for (size_t i = 0; i < n; i++)
+        {
+            _hooks.erase(addr[i]);
+        }
+    }
+
+    bool check(DWORD addr)
+    {
+        return _hooks.find(addr) != _hooks.end();
+    }
+
+    void run(DWORD addr, PCONTEXT p)
+    {
+        if (_hooks.find(addr) == _hooks.end())
+        {
+            std::string msg = std::to_string(addr) + "没有找到hook点";
+            MessageBox(NULL, msg.data(), "提示", MB_OK);
+            return;
+        }
+
+        DWORD func = _hooks[addr];
+        void (*pfunc)(PCONTEXT) = (void (*)(PCONTEXT))(func);
+        pfunc(p);
+
+        // auto adapter = (std::function<void(PCONTEXT)> *)(func);
+        // (*adapter)(p);
+    }
+
+    DWORD *hook_addrs(size_t &n)
+    {
+        n = _hooks.size();
+        if (n > 0)
+        {
+            DWORD *addrs = new DWORD[n];
+
+            int i = 0;
+            for (auto it = _hooks.begin(); it != _hooks.end(); it++)
+            {
+                addrs[i] = it->first;
+                i++;
+            }
+
+            return addrs;
+        }
+
+        return 0;
+    }
+};
+
+class hooker_base
+{
+protected:
+    hook_data *_hook_data = hook_data::get_instance();
+
+    virtual void _set_break_point(DWORD *addr, size_t n){};
+
+    virtual void _delete_break_point(DWORD *addr, size_t n){};
+
+    hooker_base()
+    {
+        // 设置异常回调
+        ExceptionHandler_ptr = AddVectoredExceptionHandler(1, (PVECTORED_EXCEPTION_HANDLER)handler);
+        MessageBox(NULL, "设置异常回调", "提示", MB_OK);
+    }
+
+private:
+    PVOID ExceptionHandler_ptr = nullptr;
+    hooker_base(const hooker_base &) = delete;            // 禁止拷贝构造函数
+    hooker_base &operator=(const hooker_base &) = delete; // 禁止赋值运算符
+
+public:
+    static void produce_dump(PEXCEPTION_POINTERS ExceptionInfo)
+    {
+        std::string dumpFilePath = get_desktop_path() + "/hook.dmp";
+
+        // 创建 dump 文件
+        HANDLE hDumpFile = CreateFile(
+            dumpFilePath.data(),
+            GENERIC_WRITE,
+            0,
+            NULL,
+            CREATE_ALWAYS,
+            FILE_ATTRIBUTE_NORMAL,
+            NULL);
+
+        if (hDumpFile != INVALID_HANDLE_VALUE)
+        {
+            // 设置 MiniDumpWriteDump 函数的参数
+            MINIDUMP_EXCEPTION_INFORMATION exceptionInfo;
+            exceptionInfo.ThreadId = GetCurrentThreadId();
+            exceptionInfo.ExceptionPointers = ExceptionInfo;
+            exceptionInfo.ClientPointers = FALSE;
+            MessageBox(NULL, "设置 MiniDumpWriteDump 函数的参数", "提示", MB_OK);
+
+            // 生成 dump 文件
+            BOOL success = MiniDumpWriteDump(
+                GetCurrentProcess(),
+                GetCurrentProcessId(),
+                hDumpFile,
+                MiniDumpNormal,
+                &exceptionInfo,
+                NULL,
+                NULL);
+
+            if (success)
+            {
+                MessageBox(NULL, (std::string("出现异常 生成dump文件:") + dumpFilePath).data(), "提示", MB_OK);
+            }
+            else
+            {
+                MessageBox(NULL, (std::string("dump文件生成失败") + std::to_string((int)GetLastError())).data(), "提示", MB_OK);
+            }
+
+            // 关闭 dump 文件句柄
+            CloseHandle(hDumpFile);
+        }
+        else
+        {
+            MessageBox(NULL, "dump文件创建失败", "提示", MB_OK);
+        }
+    }
+
+    // 处理异常的函数
+    static LONG handler(_EXCEPTION_POINTERS *ExceptionInfo)
+    {
+        static hook_data *_hook_data = hook_data::get_instance();
+
+        // 判断是否是hook的地址
+        DWORD addr = (DWORD)ExceptionInfo->ExceptionRecord->ExceptionAddress;
+
+        // 判断是否是断点异常
+        auto code = ExceptionInfo->ExceptionRecord->ExceptionCode;
+        if (code == EXCEPTION_BREAKPOINT || code == EXCEPTION_SINGLE_STEP)
+        {
+            if (_hook_data->check(addr))
+            {
+                // MessageBox(NULL, (std::string("断点地址: ") + std::to_string(addr)).data(), "提示", MB_OK);
+
+                // 调用hook函数
+                _hook_data->run(addr, ExceptionInfo->ContextRecord);
+
+                // 继续执行
+                return EXCEPTION_CONTINUE_EXECUTION;
+            }
+        }
+
+        if (_hook_data->need_dump(addr))
+        {
+            // 打印异常信息
+            DWORD exceptionCode = ExceptionInfo->ExceptionRecord->ExceptionCode;
+            std::string title = parse_error_code(exceptionCode);
+
+            // 打印堆栈数据
+            std::string msg = "";
+            PrintStackTrace(ExceptionInfo->ContextRecord, msg);
+
+            // MessageBox(NULL, msg.data(), title.data(), MB_OK);
+            // 记录文件
+            std::string errorFile = get_desktop_path() + "\\error.txt";
+            std::ofstream out(errorFile.data(), std::ios::out);
+            if (out.is_open())
+            {
+                out << "--------------------------------------------------------------------------------------------\n";
+                out << title;
+                out << "\n--------------------------------------------------------------------------------------------\n";
+                out << msg;
+                out.close();
+                MessageBox(NULL, (std::string("输出异常信息 ") + errorFile).data(), "提示", MB_OK);
+            }
+            else
+            {
+                MessageBox(NULL, "输出异常信息文件打开失败", "提示", MB_OK);
+            }
+
+            // 退出程序
+            ExitProcess(0);
+        }
+
+        // 非 hook 断点异常
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+
+    void set_hook(DWORD *addr, DWORD *func, size_t n = 1)
+    {
+        MessageBox(NULL, "set_hook", "提示", MB_OK);
+        _hook_data->set(addr, func, n);
+
+        // 设置异常
+        _set_break_point(addr, n);
+    }
+
+    void delete_hook(DWORD *addr, size_t n = 1)
+    {
+        _delete_break_point(addr, n);
+        _hook_data->del(addr, n);
+    }
+
+    virtual ~hooker_base()
+    {
+        // MessageBox(NULL, "hooker_base::~hooker_base", "提示", MB_OK);
+
+        // 获取所有的hook点
+        size_t n = 0;
+        DWORD *addrs = _hook_data->hook_addrs(n);
+
+        // 删除断点
+        delete_hook(addrs, n);
+
+        // 释放内存
+        delete[] addrs;
+
+        // MessageBox(NULL, "取消异常处理回调", "提示", MB_OK);
+        // 取消异常处理回调
+        // RemoveVectoredExceptionHandler(ExceptionHandler_ptr);
+    }
+};
+
+class hooker_soft_break : public hooker_base
+{
+protected:
+    // hook点的原代码
+    std::map<DWORD, UCHAR> _old_codes;
+
+    virtual void _set_break_point(DWORD *addr, size_t n)
+    {
+        // 用 0xCC 替换原代码
+        DWORD dwProtect = 0;
+
+        for (size_t i = 0; i < n; i++)
+        {
+            VirtualProtect((LPVOID)addr[i], 1, PAGE_EXECUTE_READWRITE, &dwProtect);
+            _old_codes[addr[i]] = *(UCHAR *)addr[i];
+            *(UCHAR *)addr[i] = 0xCC;
+            VirtualProtect((LPVOID)addr[i], 1, dwProtect, &dwProtect);
+        }
+    }
+
+    virtual void _delete_break_point(DWORD *addr, size_t n)
+    {
+        // 恢复原代码
+        DWORD dwProtect = 0;
+
+        for (size_t i = 0; i < n; i++)
+        {
+            VirtualProtect((LPVOID)addr[i], 1, PAGE_EXECUTE_READWRITE, &dwProtect);
+            *(UCHAR *)addr[i] = _old_codes[addr[i]];
+            VirtualProtect((LPVOID)addr[i], 1, dwProtect, &dwProtect);
+
+            // 删除记录
+            _old_codes.erase(addr[i]);
+        }
+    }
+
+    hooker_soft_break() : hooker_base() {}
+
+public:
+    static hooker_base *get_instance()
+    {
+        static hooker_soft_break instance;
+        return &instance;
+    }
+};
+
+class hooker_hard_break : public hooker_base
+{
+protected:
+    struct param
+    {
+        DWORD *addr;
+        size_t n;
+        DWORD threadId;
+        int clear;
+        int *dr_status;
+    };
+
+    int dr_status[4] = {0};
+
+    static void __set_dr(int n, int v, CONTEXT &ctx)
+    {
+        // MessageBox(NULL, (std::string("设置: ") + std::to_string(n) + std::to_string(v)).data(), "DRS", MB_OK);
+
+        switch (n)
+        {
+        case 0:
+            ctx.Dr0 = v;
+            // MessageBox(NULL, (std::to_string(ctx.Dr0)).data(), "DRS", MB_OK);
+            break;
+        case 1:
+            ctx.Dr1 = v;
+            // MessageBox(NULL, (std::to_string(ctx.Dr1)).data(), "DRS", MB_OK);
+            break;
+        case 2:
+            ctx.Dr2 = v;
+            // MessageBox(NULL, (std::to_string(ctx.Dr2)).data(), "DRS", MB_OK);
+            break;
+        case 3:
+            ctx.Dr3 = v;
+            // MessageBox(NULL, (std::to_string(ctx.Dr3)).data(), "DRS", MB_OK);
+            break;
+        default:
+            break;
+        }
+    }
+
+    static void _set_dr(int *ns, DWORD *v, size_t n, CONTEXT &ctx)
+    {
+        for (size_t i = 0; i < n; i++)
+        {
+            __set_dr(ns[i], v[i], ctx);
+        }
+    }
+
+    // 设置硬件断点
+    static void SetHwBreakPoint(HANDLE hThread, DWORD *addr, int clear, int *drn, size_t n)
+    {
+        CONTEXT ctx;
+        ctx.ContextFlags = CONTEXT_ALL;
+        GetThreadContext(hThread, &ctx);
+
+        // ctx.Dr1 = (DWORD)GetModuleHandle(NULL) + 0x5BEE;
+        // ctx.Dr7 |= 0x1 << 2; // 全局开关
+
+        // ctx.Dr0 = (DWORD)GetModuleHandle(NULL) + 0x5BEE;
+        // ctx.Dr7 |= 0x1 << 1; // 全局开关
+        // ctx.Dr7 |= 0x1; // 局部开关
+
+        // MessageBox(NULL, (std::string("dr n: ") + std::to_string(ctx.Dr0) + " dr7: " + std::to_string(ctx.Dr7)).data(), "DRS", MB_OK);
+        // SetThreadContext(hThread, &ctx);
+        // return;
+
+        if (clear)
+        {
+            _set_dr(drn, 0, n, ctx);
+        }
+        else
+        {
+            _set_dr(drn, addr, n, ctx);
+        }
+
+        // 全开
+        ctx.Dr7 = 0x55;
+
+        SetThreadContext(hThread, &ctx);
+    }
+
+    static void loop(param *p, int *drn)
+    {
+        // 遍历线程 通过openthread获取到线程环境后设置硬件断点
+        HANDLE hTool32 = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+        if (hTool32 != INVALID_HANDLE_VALUE)
+        {
+            // 线程环境结构体
+            THREADENTRY32 thread_entry32;
+
+            thread_entry32.dwSize = sizeof(THREADENTRY32);
+
+            HANDLE hHookThread = NULL;
+
+            // 遍历线程
+            if (Thread32First(hTool32, &thread_entry32))
+            {
+                do
+                {
+                    // 如果线程父进程ID为当前进程ID
+                    if (thread_entry32.th32OwnerProcessID == GetCurrentProcessId())
+                    {
+                        // MessageBox(NULL, (std::string("线程ID: ") + std::to_string(thread_entry32.th32ThreadID) + " 进程ID: " + std::to_string(thread_entry32.th32OwnerProcessID)).data(), "提示", MB_OK);
+
+                        // 打开主线程
+                        HANDLE hadl = OpenThread(THREAD_SET_CONTEXT | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, thread_entry32.th32ThreadID);
+                        SuspendThread((HANDLE)hadl);
+                        SetHwBreakPoint(hadl, p->addr, p->clear, drn, p->n);
+                        ResumeThread((HANDLE)hadl);
+                        CloseHandle(hadl);
+                    }
+
+                } while (Thread32Next(hTool32, &thread_entry32));
+            }
+            CloseHandle(hTool32);
+        }
+    }
+
+    static int check_dr_idx(int *dr_status, int clear, DWORD addr)
+    {
+        // 确定 drn
+        int drn = -1;
+        if (clear)
+        {
+            // 取消硬件断点
+            for (int i = 0; i < 4; i++)
+            {
+                if (*(dr_status + i) == addr)
+                {
+                    *(dr_status + i) = 0;
+
+                    drn = i;
+                    break;
+                }
+
+                if (i == 3)
+                {
+                    // MessageBox(NULL, "没有找到硬件断点", "DRS", MB_OK);
+                }
+            }
+        }
+        else
+        {
+            // 设置硬件断点
+            for (int i = 0; i < 4; i++)
+            {
+                if (*(dr_status + i) == 0)
+                {
+                    // dr i
+                    drn = i;
+                    *(dr_status + i) = addr;
+                    break;
+                }
+
+                if (i == 3)
+                {
+                    // MessageBox(NULL, "没有找到空闲的硬件断点", "DRS", MB_OK);
+                }
+            }
+        }
+
+        return drn;
+    }
+
+    static DWORD WINAPI threadPro(_In_ LPVOID lpParam)
+    {
+        // 获取参数
+        param *p = (param *)lpParam;
+
+        // 确定 drn
+        int n = min(4, p->n);
+        int *drn = new int[n];
+        for (int i = 0; i < n; i++)
+        {
+            drn[i] = check_dr_idx(p->dr_status, p->clear, p->addr[i]);
+            MessageBox(NULL, (std::to_string(i) + ": " + std::to_string(drn[i])).data(), "提示", MB_OK);
+        }
+
+        // 遍历线程设置断点
+        loop(p, drn);
+
+        // 释放内存
+        delete[] drn;
+        delete[] p->addr;
+        delete p;
+
+        return 0;
+    }
+
+    void __set_break_point(DWORD *addr, int clear, size_t n)
+    {
+
+        // 固化参数 addr
+        DWORD *_addr = new DWORD[n];
+        memcpy(_addr, addr, n * sizeof(DWORD));
+
+        // 参数
+        param *p = new param{_addr, n, GetCurrentThreadId(), clear, dr_status};
+
+        // 在子线程中设置硬件断点
+        HANDLE hThread = CreateThread(NULL, NULL, threadPro, (LPVOID)p, NULL, NULL);
+
+        // 关闭线程句柄
+        CloseHandle(hThread);
+    }
+
+    virtual void _set_break_point(DWORD *addr, size_t n) override
+    {
+        __set_break_point(addr, 0, n);
+    }
+
+    virtual void _delete_break_point(DWORD *addr, size_t n) override
+    {
+        // MessageBox(NULL, "_delete_break_point", "提示", MB_OK);
+        __set_break_point(addr, 1, n);
+    }
+
+    hooker_hard_break() : hooker_base() {}
+
+public:
+    static hooker_base *get_instance()
+    {
+        MessageBox(NULL, "get_instance", "提示", MB_OK);
+
+        static hooker_hard_break instance;
+        MessageBox(NULL, "&instance;", "提示", MB_OK);
+        return &instance;
+    }
+
+    virtual ~hooker_hard_break() override
+    {
+        // MessageBox(NULL, "hooker_hard_break::~hooker_hard_break", "提示", MB_OK);
+    }
+};

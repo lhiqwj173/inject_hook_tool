@@ -38,6 +38,17 @@
             "console": "integratedTerminal",
         },
         {
+            "name": "调试 tdx",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}\\tdx_test\\Release\\tdx.exe",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${fileDirname}",
+            "environment": [],
+            "console": "integratedTerminal",
+        },
+        {
             "name": "调试dump",
             "type": "cppvsdbg",
             "request": "launch",
@@ -46,7 +57,7 @@
             "cwd": "${fileDirname}",
             "environment": [],
             "console": "integratedTerminal",
-            "dumpPath": ""
+            "dumpPath": "C:\\Users\\lh\\Desktop\\hook.dmp"
         }
     ]
 }
